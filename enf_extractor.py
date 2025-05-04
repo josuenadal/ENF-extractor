@@ -6,11 +6,13 @@ import time
 from dataclasses import dataclass
 import numpy as np
 import numpy.ma as ma
+import resampy
+import librosa
 import matplotlib
 import matplotlib.pyplot as plt
 from matplotlib import mlab
-from matplotlib.widgets import Button, Slider, RangeSlider
-from scipy.signal import butter, filtfilt, sosfilt, resample, savgol_filter
+from matplotlib.widgets import Button, Slider, RangeSlider, TextBox
+from scipy.signal import butter, filtfilt, sosfilt, resample, savgol_filter, decimate
 from scipy.interpolate import make_smoothing_spline
 from audio2numpy import open_audio
 import pylab
@@ -54,11 +56,20 @@ class Signal:
     L_channel: list[float]
     R_channel: list[float]
     # Filtered
+    resampled_rate = None
     Filtered_signal: list[float]
-    Filtered_L_channel: list[float]
-    Filtered_R_channel: list[float]
+    Filtered_L_channel: np.ndarray
+    Filtered_R_channel: np.ndarray
+
+    savgol_w_length = 100
+    savgol_polyorder = 4
 
     def __init__(self, sig_tup):
+        
+        if self.savgol_polyorder > self.savgol_w_length:
+            print("Savgol polyorder must be less than window length")
+            quit()
+
         signal = sig_tup[0]
         sample_rate = sig_tup[1]
 
@@ -76,10 +87,10 @@ class Signal:
         if type(signal[0]) is np.ndarray:
             self.is_stereo = True
             for s in signal:
-                self.L_channel.append(s[0].item())
-                self.R_channel.append(s[1].item())
-        self.Filtered_L_channel = self.L_channel
-        self.Filtered_R_channel = self.R_channel
+                self.L_channel.append(s[0])
+                self.R_channel.append(s[1])
+        self.Filtered_L_channel = np.array(self.L_channel)
+        self.Filtered_R_channel = np.array(self.R_channel)
 
     def create_butter_bandpass(self, lowcut, highcut, fs, order=5):
         nyq = 0.5 * fs
@@ -89,27 +100,58 @@ class Signal:
         return sos
 
     def  butter_bandpass_filter(self, low, high, order=5):
-        sos = self.create_butter_bandpass(low, high, self.sample_rate, order=order)
+
+        samples = self.sample_rate
+        # if self.resampled_rate is not None:
+        #     samples = self.resampled_rate
+
+        sos = self.create_butter_bandpass(low, high, samples, order=order)
         # Apply the filter
         if self.is_stereo:
             self.Filtered_L_channel = sosfilt(sos,  self.Filtered_L_channel)
             self.Filtered_R_channel = sosfilt(sos,  self.Filtered_R_channel)
         else:
             self.Filtered_signal = sosfilt(sos, self.Filtered_signal)
+    
+    def resample(self, new_sample):
+        t = np.linspace(0, self.sample_count, self.sample_rate)
+        if self.is_stereo:
+            self.Filtered_L_channel = resample(self.Filtered_L_channel, int(new_sample), domain="time",)
+            self.Filtered_R_channel = resample(self.Filtered_R_channel, int(new_sample), domain="time",)
+        else:
+            self.Filtered_signal = resample(self.Filtered_signal, int(new_sample), domain="time")
+        self.resampled_rate = int(new_sample)
+    
+    def resampy(self, new_sample):
+        if self.is_stereo:
+            self.Filtered_L_channel = resampy.resample(self.Filtered_L_channel, self.sample_rate, int(new_sample))
+            self.Filtered_R_channel = resampy.resample(self.Filtered_R_channel, self.sample_rate, int(new_sample))
+        else:
+            self.Filtered_signal = resampy.resample(self.Filtered_signal, self.sample_rate, int(new_sample))
+        self.resampled_rate = int(new_sample)
+    
+    def librosa_resample(self, new_sample):
+        print(f"type {type(self.Filtered_L_channel)}")
+        if self.is_stereo:
+            self.Filtered_L_channel = librosa.resample(self.Filtered_L_channel, orig_sr=self.sample_rate, target_sr=int(new_sample))
+            self.Filtered_R_channel = librosa.resample(self.Filtered_R_channel, orig_sr=self.sample_rate, target_sr=int(new_sample))
+        else:
+            self.Filtered_signal = librosa.resample(self.Filtered_signal, orig_sr=self.sample_rate, target_sr=int(new_sample))
+        self.resampled_rate = int(new_sample)
 
-    def resample(self, num):
-        print()
-        # if self.is_stereo:
-        #             resample(self.Filtered_L_channel, 120)
-        #             self.Filtered_L_channel = sosfilt(sos, self.Filtered_L_channel)
-        #             self.Filtered_R_channel = sosfilt(sos, self.Filtered_R_channel)
-        #         else:
-        #             self.Filtered_signal = sosfilt(sos, self.Filtered_signal)
+    def decimate(self, new_sample):
+        if self.is_stereo:
+            self.Filtered_L_channel = decimate(self.Filtered_L_channel, int(new_sample))
+            self.Filtered_R_channel = decimate(self.Filtered_R_channel, int(new_sample))
+        else:
+            self.Filtered_signal = decimate(self.Filtered_signal, int(new_sample))
+        self.resampled_rate = int(new_sample)
+
         
 class FrequencySelector:
     """FrequencySelector"""
     # Properties
-    default_window_length = 250000
+    default_window_length = None
 
     signal = plot_title = None
     figure = spectogram_Ax = colorbar = None
@@ -145,14 +187,12 @@ class FrequencySelector:
     # spec_ylim = (57,59)
     # spec_ylim = (119,121)
 
-    NFFT = 30000
-    noverlap = 29000
-    pad_to = 650000
+    NFFT = noverlap = pad_to = 0
 
     cmap = pylab.get_cmap('Greys')
     scale_by_freq = True
 
-    cmap = pylab.get_cmap('Greys')
+    button_color = "black"
 
     def reset_widgets(self, event):
         self.NFFT_slider.reset()
@@ -168,16 +208,17 @@ class FrequencySelector:
             return (self.vmin, self.vmax)
     
     def create_layout(self):
+        plt.style.use('dark_background')
         self.figure = plt.figure(figsize=(10,5))
         self.spectogram_Ax = plt.axes((0.085, 0.3, 1, 0.6))
 
-        slider_max = int(self.signal.sample_rate*10)
+        slider_max = 50000
 
         self.slider_Ax_1 = plt.axes((0.085,0.225,0.8,0.02))
         self.NFFT_slider = Slider(
             ax = self.slider_Ax_1,
             label = 'NFFT',
-            valmin = 0,
+            valmin = 2,
             valmax = slider_max,
             valinit = self.NFFT,
             valfmt="%i"
@@ -188,7 +229,7 @@ class FrequencySelector:
             ax = self.slider_Ax_2,
             label = 'noverlap',
             valmin = 0,
-            valmax = slider_max,
+            valmax = slider_max - 2,
             valinit = self.noverlap,
             valfmt="%i"
         )
@@ -215,10 +256,15 @@ class FrequencySelector:
 
         # Create a `matplotlib.widgets.Button` to reset the sliders to initial values.
         self.reset_Btn_Ax = plt.axes((0.085,0.1,0.390,0.04))
-        self.reset_Btn = Button(self.reset_Btn_Ax, 'Reset', hovercolor='0.975')
+        self.reset_Btn = Button(self.reset_Btn_Ax, 'Reset All Parameters', hovercolor='0.975', color=self.button_color)
+        
+        # self.freq_box_Ax = plt.axes((0.085,0.05,0.390,0.04))
+        # text_box = TextBox(self.freq_box_Ax, "Frequency", textalignment="center", color=self.button_color)
+        # text_box.set_val("potato")
+        # text_box.begin_typing()
 
         self.plot_Btn_Ax = plt.axes((0.495,0.1,0.390,0.04))
-        self.plot_Btn = Button(self.plot_Btn_Ax, 'Plot All', hovercolor='0.975')
+        self.plot_Btn = Button(self.plot_Btn_Ax, 'Plot All', hovercolor='0.975', color=self.button_color)
         
         self.NFFT_slider.on_changed(self.redraw_view)
         self.padto_slider.on_changed(self.redraw_view)
@@ -227,6 +273,7 @@ class FrequencySelector:
 
         self.reset_Btn.on_clicked(self.reset_widgets)
         self.plot_Btn.on_clicked(self.plot_chunk_lines)
+        # text_box.on_submit(self.submit)
 
         cax, kw = matplotlib.colorbar.make_axes(self.spectogram_Ax, orienation="vertical")
         norm = matplotlib.colors.Normalize(vmin=self.vminmax_slider.val[0], vmax=self.vminmax_slider.val[1])
@@ -239,17 +286,31 @@ class FrequencySelector:
 
         self.set_axis_ylim()
 
+    def submit(self, val):
+        print(val)
+
     def plot_spectogram(self, val=None):
+
+        if self.noverlap_slider.val > self.NFFT_slider.val:
+            self.spectogram_Ax.set_title("noverlap cannot be greater than NFFT-1")
+            return
 
         if self.signal.is_stereo:
             data = self.signal.Filtered_L_channel
         else:
             data = self.signal.Filtered_signal
+
+        if self.default_window_length is None:
+            self.default_window_length = self.signal.sample_count
         
-        self.spec_data, self.spec_frequencies, self.spec_time, self.spec_image = self.spectogram_Ax.specgram(data[:self.default_window_length], 
+        sr = self.signal.sample_rate
+        if self.signal.resampled_rate is not None:
+            sr = self.signal.resampled_rate
+        
+        self.spec_data, self.spec_frequencies, self.spec_time, self.spec_image = self.spectogram_Ax.specgram(data, 
                 NFFT=int(self.NFFT_slider.val), 
                 noverlap=int(self.noverlap_slider.val), 
-                Fs=self.signal.sample_rate, 
+                Fs=sr,
                 pad_to=int(self.padto_slider.val), cmap=self.cmap,
                 vmin=self.vminmax_slider.val[0], vmax=self.vminmax_slider.val[1])
 
@@ -280,21 +341,9 @@ class FrequencySelector:
             i.set_clim(self.vminmax_slider.val[0], self.vminmax_slider.val[1])
             self.colorbar.update_normal(i)
     
-    def get_min_w_index(self, arr):
-        min_val = 0
-        max_freq_index = 0
-        for i in range(len(arr)):
-            if self.y_mean is None:
-                if (arr[i] < min_val):
-                    min_val = arr[i]
-                    max_freq_index = i
-            elif (arr[i] < min_val) and (arr[i] < (self.y_mean + 0.6)) and (arr[i] > (self.y_mean - 0.6)):
-                min_val = arr[i]
-                max_freq_index = i
-        return (min_val, max_freq_index)
-
+    def get_min_w_index(self, arr):2
     def has_acceptable_deviation(self, prev_freq, curr_freq):
-        dev = 0.2
+        dev = 0.06
         if prev_freq is not None:
             diff = abs(prev_freq - curr_freq)
             if (diff <= dev):
@@ -365,7 +414,10 @@ class FrequencySelector:
 
         self.graph_Ax.clear()
         self.graph_Ax.plot(self.ENF_x_points, self.ENF_y_points, 'r-', label="raw")
-        self.graph_Ax.plot(self.ENF_x_points, savgol_filter(self.ENF_y_points, 20, 2), "g-", label="smoothed")
+
+        savgol_co = int(len(self.ENF_y_points)/len(self.spec_time))-1
+        # if savgol_co < 1:
+        # self.graph_Ax.plot(self.ENF_x_points, savgol_filter(self.ENF_y_points, int(len(self.ENF_y_points)/len(self.spec_time))-1, self.signal.savgol_polyorder), "g-", label="smoothed")
 
         self.figure.canvas.draw()
         self.figure.canvas.flush_events()
@@ -386,8 +438,20 @@ class FrequencySelector:
     def save_viewlims(self):
         self.y0, self.y1 = self.spectogram_Ax.get_ylim()
         self.x0, self.x1 = self.spectogram_Ax.get_xlim()
+    
+    def center_on_highest_spectrum_in_view(self):
+        if self.signal.is_stereo:
+            # Choose left channel (arbitrary)
+            data = self.signal.Filtered_L_channel
+        else:
+            data = self.signal.Filtered_signal
+        spec, freq, line = plt.magnitude_spectrum(data, Fs = self.signal.sample_rate, color='C1',window=mlab.window_none)
+        self.graph_Ax.plot(spec,freq,"r-")
+        print(f"data is {data}")
 
     def plot_chunk_lines(self, event):
+
+        print("Will start plotting the ENF...")
 
         self.save_viewlims()
 
@@ -395,11 +459,17 @@ class FrequencySelector:
 
         self.redraw_spectogram(None)
 
+        # self.center_on_highest_spectrum_in_view
         # x overlap acounts for the shrinkage during the plotting of the spectogram.
         # x overlap makes sure that no points are skipped.
         x0_overlap = int((self.spec_time[0]*self.signal.sample_rate)-0)
         graph_end_point_index = int(((self.default_window_length/self.signal.sample_rate)-(self.spec_time[-1])) * self.signal.sample_rate)
         x1_overlap = x0_overlap + graph_end_point_index
+
+        if self.signal.resampled_rate is not None:
+            x0_overlap = int((self.spec_time[0]*self.signal.resampled_rate)-0)
+            graph_end_point_index = int(((self.default_window_length/self.signal.resampled_rate)-(self.spec_time[-1])) * self.signal.resampled_rate)
+            x1_overlap = x0_overlap + graph_end_point_index
         
         print(f"overlaps {x0_overlap}, {x1_overlap}")
         
@@ -409,10 +479,6 @@ class FrequencySelector:
         else:
             data = self.signal.Filtered_signal
         
-        # Starting steps for chunk calculation
-        x0 = 0
-        x1 = self.default_window_length
-
         # Get initial y values and keep them for the duration of the plotting.        
         y0, y1 = self.spectogram_Ax.get_ylim()
         print(f"ylims {(y0,y1)}")
@@ -421,16 +487,29 @@ class FrequencySelector:
         # This is what will be output as CSV.
         self.ENF_y_points = []
         self.ENF_x_points = []
-        while (x1 < self.signal.sample_count):
+
+        # Starting steps for chunk calculation
+        x0 = 0
+        x1 = self.default_window_length
+
+        sr = self.signal.sample_rate
+        sc = self.signal.sample_count
+        if self.signal.resampled_rate is not None:
+            sr = self.signal.resampled_rate
+            sc = len(self.spec_time)
+            x1 = len(data)
+
+        while(True):
 
             # Calculate spectogram in current window.
-            print(f"Moving window to {x0/self.signal.sample_rate}s, {x1/self.signal.sample_rate}s")
+            print(f"Moving window to {x0/sr}s, {x1/sr}s")
+            self.save_viewlims()
             self.spectogram_Ax.clear()
             self.spectogram_Ax.set_title(f"Sample for {self.plot_title}")
             self.spec_data, self.spec_frequencies, self.spec_time, self.spec_image = self.spectogram_Ax.specgram(data[x0:x1],
                 NFFT=int(self.NFFT_slider.val),
                 noverlap=int(self.noverlap_slider.val),
-                Fs=self.signal.sample_rate,
+                Fs=sr,
                 pad_to=int(self.padto_slider.val), cmap=self.cmap,
                 vmin=self.vminmax_slider.val[0], vmax=self.vminmax_slider.val[1]
             )
@@ -450,22 +529,25 @@ class FrequencySelector:
 
             # Move window.
             x0 = x1 - x1_overlap
-            x1 = x1 + self.default_window_length - x1_overlap
+            x1 = 0
+            if self.default_window_length is None:
+                x1 = x1 + x1_overlap
+            else:
+                x1 = x1 + self.default_window_length - x1_overlap
+
+            if x1 >= sc:
+                break
         
         # When done create "save" button and refresh image.
         self.save_enf_plot_ax = plt.axes((0.495,0.05,0.390,0.04))
-        self.save_enf_plot_Btn = Button(self.save_enf_plot_ax, 'Save ENF plot', hovercolor='0.975')
+        self.save_enf_plot_Btn = Button(self.save_enf_plot_ax, 'Save ENF plot', hovercolor='0.975', color=self.button_color)
         self.save_enf_plot_Btn.on_clicked(self.save_enf_plot)
         self.figure.canvas.draw()
         self.figure.canvas.flush_events()
-
-    def resample_signal(self):
-        if self.resample_signal:
-            self.signal.resample(120)
     
     def filter_signal(self):
         if self.target_frequency is not None:
-            self.signal.butter_bandpass_filter(self.target_frequency-1, self.target_frequency+1, 5)
+            self.signal.butter_bandpass_filter(self.target_frequency-1, self.target_frequency+1, 4)
     
     def set_plot_title(self, title):
         self.plot_title = title
@@ -479,7 +561,7 @@ class FrequencySelector:
         date = datetime.today().strftime('%Y-%m-%d')
         fname = f"{os.path.splitext(os.path.basename(self.plot_title))[0]}_{date}.csv"
         # Smooth
-        self.ENF_y_points = savgol_filter(self.ENF_y_points, 20, 2)
+        # self.ENF_y_points = savgol_filter(self.ENF_y_points, int(len(self.ENF_y_points)/6), self.signal.savgol_polyorder)
         with open(fname, "w") as f:
             for i in range(len(self.ENF_x_points)):
                 f.write(f"{self.ENF_x_points[i].item()}, {self.ENF_y_points[i].item()}\n")
@@ -497,15 +579,26 @@ class FrequencySelector:
         self.signal = signal
         self.plot_title = name
         self.target_frequency = target_freq
-        self.create_layout()
+
         self.filter_signal()
-        # self.spectogram_Ax.magnitude_spectrum(data, Fs = self.signal.sample_rate, color='C1',window=mlab.window_none)
-        # self.spectogram_Ax.set_xlim(auto=True)
-        # self.spectogram_Ax.set_ylim(auto=True)
-        # self.resample_signal()
+        self.filter_signal()
+        self.signal.librosa_resample(420)
+
+        # self.default_window_length = 100000
+        self.NFFT = 4096
+        self.noverlap = 128
+        self.pad_to = 256
+
+        self.create_layout()
+
+        # self.signal.resampy(120)
+        # self.signal.decimate(240 * self.signal.duration)
+        # self.filter_signal()
         self.plot_spectogram()
+
         self.set_axis_ylim()
-        plt.show()
+        # self.spectogram_Ax.set_ylim(auto=True)
+        plt.show() 
 
 #
 # MAIN
