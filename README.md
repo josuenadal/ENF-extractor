@@ -1,86 +1,129 @@
 # ENF Extractor
 
-Extract Electric Network Frequency (ENF) from an audio/video file for analysis.
+Extract Electric Network Frequency (ENF) from an audio/video file as CSV for analysis.
 
-![](./read_me_images/plotted.png)
-*ENF from a recording of motors found at the 120Hz harmonic in the audio of a [youtube video](https://www.youtube.com/watch?v=uPY91zJfXUM").*
+<p align="center">
+  <img src="./read_me_images/ENF_Extractor.GIF" />
+</p>
+
+*The clip shows ENF from a recording of motors found at the 120Hz harmonic in the audio of a [youtube video](https://www.youtube.com/watch?v=uPY91zJfXUM").*
 
 ENF Reference not included.
 
-## How to use
-Pass in a video or audio file as the first argument. 
+## Table of Contents
+- [ENF Extractor](#enf-extractor)
+  - [Table of Contents](#table-of-contents)
+  - [Features](#features)
+  - [Installation](#installation)
+  - [Usage](#usage)
+    - [Basic Usage](#basic-usage)
+      - [Command Line Options](#command-line-options)
+    - [Interface Guide](#interface-guide)
+      - [Spectrogram View](#spectrogram-view)
+        - [Slider Controls](#slider-controls)
+      - [Plotting Features](#plotting-features)
+      - [Segmented Processing: Handle large files in sections](#segmented-processing-handle-large-files-in-sections)
+      - [Saving Results](#saving-results)
+  - [Technical Notes](#technical-notes)
+  - [References (you can find them online easily):](#references-you-can-find-them-online-easily)
 
-> enf_extractor.py "./Calming & Relaxing 60 Cycle Hum.mp3"
+## Features
+- Extract ENF signals from audio/video files
+- Visual spectrogram analysis
+- Adjustable FFT parameters via interactive sliders
+- Target frequency filtering
+- Segmented processing for large files
+- CSV export functionality
 
-|Flag|Description|
-|---|---|
-| -f | Target frequency to filter and center on plot. |
-| -s | Interval to plot at a time. |
+## Installation
+```bash
+git clone [repository-url]
+cd enf-extractor
+pip install -r requirements.txt
+```
+## Usage
 
-The tool will automatically extract audio from videos and place them into a ./audio/ directory. And show you the spectrogram.
+### Basic Usage
+```bash
+python enf_extractor.py "path/to/your/file.mp3"
+```
+
+#### Command Line Options
+|Flag|Description|Type|
+|---|---|---|
+| -f | Target frequency to filter and center on plot. |-f 120|
+| -s | Time interval (in seconds) to plot at once |-s 100|
+
+### Interface Guide
+
+#### Spectrogram View
+
+Initial Spectrogram
+
+If you pass in a video, the tool will automatically extract audio (saved to ./audio/) and display the spectrogram.
 
 ![Image](./read_me_images/init.png)
 
-Note the dark lines at approx. 60Hz, 120Hz and 180Hz. This is the ENF of a 60Hz alternating current and its harmonics at 120Hz and 180Hz
+American ENF signals appear at:
+- 60Hz (fundamental frequency)
+- 120Hz (first harmonic)
+- 180Hz (second harmonic)
 
-The 120Hz harmonic is more visible, probably due to less signals interfering at that frequency, so I will use that one. I use the matplotlib zoom tool at the top-left of the window to center around 120Hz and the sliders at the bottom to tweak the spectrogram.
+##### Slider Controls
 
-![Image](./read_me_images/found.png)
+The interactive sliders adjust spectrogram parameters for optimal ENF extraction. Check out my working explanation:
 
-### Sliders
-
-The sliders are used to tweak the spectrogram parameters for better ENF extraction. The most relevant ones for extraction are NFFT, n_overlap and pad_to.
-
-You can watch this video by Aniel Maharajh for an short (10m) but in depth explanation of how they work
-
-[![Watch the video](https://img.youtube.com/vi/_RoSWJiclvQ/0.jpg)](https://www.youtube.com/watch?v=_RoSWJiclvQ)
-
-Or check out my working explanation below.
 | Slider | Description |
 | ------ | ----------- |
 | NFFT | The **NFFT** is the number of points used in each block for the FFT. This can control frequency definition vertically. The larger the block the better the time component (how the frequency changes), the smaller it is the better the frequency component (what frequencies exist in that block). The default value of 4096 is good for our application. |
-| n_overlap | The **n_overlap** is the number of points to overlap between these blocks. The closer to NFFT the more time you get resolution but it cannot be larger than NFFT-1. |
-| pad_to | The **pad_to** slider controls the length of the transformed axis of the output. If its smaller than the length of the input the output gets cropped, if its larget it gets padded. This can increase vertical resolution. |
+| n_overlap | The **n_overlap** is the number of points to overlap between these blocks. The closer to NFFT the more time points, but it cannot be larger than NFFT-1.  |
+| pad_to | The **pad_to** slider controls the length of the transformed axis of the output. If its smaller than the length of the input the output gets cropped, if its larget it gets padded. This can increase the amount of vertical points. |
 | vmin_vmax | Defines the range of the colormap. Use it to highlight specific levels you want to see.  |
 
-Please note that this is all limited by the quality of your recording. If your recording is low quality you won't be able to extract a lot of detail from the image. You can usually tell that your recording is low quality or compressed by a large amount of horizontal lines when you plot.
+For a detailed explanation, watch this [FFT Parameters Tutorial](https://www.youtube.com/watch?v=_RoSWJiclvQ) on youtube.
 
-## Plot
+#### Plotting Features
 
-Once you have centered the view on the frequency you want to extract, press the Plot All button and the program will select the highest frequencies within the view.
+Target Frequency Mode:
 
-![Image](./read_me_images/plotted.png)
+```bash
+python enf_extractor.py "./Calming & Relaxing 60 Cycle Hum.mp3" -f 120
+```
 
-## Passing in a target frequency
-
-Pass in a target frequency with the -f flag to apply a bandpass signal around that target frequency and also center the plot on that frequency.
-
-> enf_extractor.py "./Calming & Relaxing 60 Cycle Hum.mp3" -f 120
+Note that the plot has been centered on the frequency passed in through the -f flag and the signal has also been filtered to +-1Hz of that frequency.
 
 ![Image](./read_me_images/targeted_frequency.png)
 
-## Segmented Plotting
+#### Segmented Processing: Handle large files in sections
 
-The program also allows you to plot specific intervals of the signal at a time by passing in the amount of seconds you want to plot at a time you can work with low memory. 
+```bash
+python enf_extractor.py "./Calming & Relaxing 60 Cycle Hum.mp3" -f 120 -s 100
+```
 
-> enf_extractor.py "./Calming & Relaxing 60 Cycle Hum.mp3" -f 120 -s 100
+Note that the signal length has been reduced to about 100 seconds.
 
 ![Image](./read_me_images/segmented_init.png)
-Note that the signal length is only around 90 seconds long in the previous image.
 
-Once plotted it will look like this.
-The bottom graph is the whole signal and the top graph is only the current portion of the signal being calculated.
+When you press the Plot All button the view will split showing the current segment at the top and the total ENF graph at the bottom.
 
 ![Image](./read_me_images/segmented_plotted.png)
 
-## Save
+#### Saving Results
 
-Press the Save ENF plot button to save the data to a .CSV file with the same name.
+Click "Save ENF plot" to export data as a CSV file:
 
 ![Image](./read_me_images/data.png)
 
-## Aditional reading (they're free online):
+## Technical Notes
+- ENF is not always present in a recording.
+- All recordings have a quality limit you can't pass no matter how much you tweak the spectrogram. (No "Enhance")
+  - Some audio recordings are compressed, you will know because compression artifacts usually appear as horizontal lines in the ENF.
+- The signal is downsampled to 420Hz, which limits the amount of frequencies you can view. ([Nyquist Frequency](https://en.wikipedia.org/wiki/Nyquist_frequency))
+- Memory requirements increase really fast with file size and FFT parameters.
 
-Grigoras, C. (2005). Digital audio recording analysis: the Electric Network Frequency (ENF) Criterion. International Journal of Speech, Language and the Law, 12(1), 63-76. https://doi.org/10.1558/sll.2005.12.1.63
+## References (you can find them online easily):
+    
+    Grigoras, C. (2005). Digital audio recording analysis: the Electric Network Frequency (ENF) Criterion. International Journal of Speech, Language and the Law, 12(1), 63-76. https://doi.org/10.1558/sll.2005.12.1.63
 
-Jr, Ojowu, & Karlsson, Johan & Li, Jian & Liu, Yilu. (2012). ENF Extraction From Digital Recordings Using Adaptive Techniques and Frequency Tracking. IEEE Transactions on Information Forensics and Security. 7. 1330-1338. [10.1109/TIFS.2012.2197391. ](https://doi.org/10.1109/TIFS.2012.2197391)
+    Jr, Ojowu, & Karlsson, Johan & Li, Jian & Liu, Yilu. (2012). ENF Extraction From Digital Recordings Using Adaptive Techniques and Frequency Tracking. IEEE Transactions on Information Forensics and Security. 7. 1330-1338. https://doi.org/10.1109/TIFS.2012.2197391
+
